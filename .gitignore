@@ -1,0 +1,63 @@
+# ===== Go build artifacts =====
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.a
+
+# Binaries (common output folders)
+bin/
+dist/
+build/
+target/
+out/
+
+# Go workspace (if you use it)
+go.work
+go.work.sum
+
+# Coverage profiles
+*.coverprofile
+coverage.*
+cover.out
+
+# Profiling / trace output
+*.pprof
+*.trace
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.swp
+*.swo
+
+# Dependency / vendor (choose based on your workflow)
+vendor/
+
+# ===== IDEs and editors =====
+.vscode/
+.idea/
+*.iml
+
+# ===== OS files =====
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ===== Environment / secrets (adjust as needed) =====
+.env
+.env.*
+!.env.example
+
+# ===== Misc =====
+*.local
+
