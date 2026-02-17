@@ -201,7 +201,7 @@ e.g.
 For TAP and MMDS testing:
 
 ```bash
-sudo make run-net
+make run-net
 ```
 
 ---
@@ -241,7 +241,7 @@ Builds the host-side runner (`fc-run`) and demos.
 Runs one microVM and prints a receipt JSON. Disk counters come from Firecracker metrics and are flushed at the end using the `FlushMetrics` action.
 Metrics output is written to the configured `metrics_path`. 
 
-## `sudo make run-net`
+## `make run-net`
 
 Same as `make run`, plus:
 
