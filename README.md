@@ -18,7 +18,7 @@ Guest behavior lives inside the root filesystem image. The host runner stays int
 Firecracker lifecycle and metrics collection are easy to get subtly wrong:
 
 * A guest can halt while Firecracker keeps running, so relying on Firecracker process exit is brittle.
-* Metrics can be incomplete unless `FlushMetrics` is called and the metrics file is allowed to advance. ([GitHub][2])
+* Metrics can be incomplete unless `FlushMetrics` is called and the metrics file is allowed to advance. 
 * A clean “done” signal from inside the guest is needed to mark completion reliably.
 * Producing one portable record per run is simpler than scraping logs.
 
@@ -51,8 +51,8 @@ A TAP device is a host-side virtual NIC. Firecracker can attach a TAP as a guest
 
 ### MMDS
 
-MMDS is Firecracker’s metadata service, configured through the Firecracker API. ([GitHub][2])
-Firecracker’s device model intercepts ARP and TCP packets destined for the MMDS IP (default `169.254.169.254`) and serves metadata responses without sending that traffic to the TAP device. ([GitHub][2])
+MMDS is Firecracker’s metadata service, configured through the Firecracker API. 
+Firecracker’s device model intercepts ARP and TCP packets destined for the MMDS IP (default `169.254.169.254`) and serves metadata responses without sending that traffic to the TAP device. 
 
 ## Host requirements
 
@@ -238,8 +238,8 @@ Builds the host-side runner (`fc-run`) and demos.
 
 ## `make run`
 
-Runs one microVM and prints a receipt JSON. Disk counters come from Firecracker metrics and are flushed at the end using the `FlushMetrics` action. ([GitHub][2])
-Metrics output is written to the configured `metrics_path`. ([GitHub][2])
+Runs one microVM and prints a receipt JSON. Disk counters come from Firecracker metrics and are flushed at the end using the `FlushMetrics` action.
+Metrics output is written to the configured `metrics_path`. 
 
 ## `sudo make run-net`
 
