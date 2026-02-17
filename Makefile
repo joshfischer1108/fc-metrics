@@ -14,7 +14,7 @@ build:
 	go build ./cmd/fc-weather-demo
 
 run:
-	./cmd/fc-run/fc-run -fc $(ARTIFACTS)/firecracker -kernel $(ARTIFACTS)/vmlinux -rootfs $(ROOTFS) -timeout 30s -keep
+	./fc-run -fc $(ARTIFACTS)/firecracker -kernel $(ARTIFACTS)/vmlinux -rootfs $(ROOTFS) -timeout 30s -keep
 
 run-net:
-	sudo ./cmd/fc-run/fc-run -fc $(ARTIFACTS)/firecracker -kernel $(ARTIFACTS)/vmlinux -rootfs $(ROOTFS) -timeout 30s -keep -net -mmds
+	sudo ./fc-run -fc $(ARTIFACTS)/firecracker -kernel $(ARTIFACTS)/vmlinux -rootfs $(ROOTFS) -timeout 30s -keep -net -mmds
