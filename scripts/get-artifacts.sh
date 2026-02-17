@@ -35,11 +35,6 @@ curl -fL "https://s3.amazonaws.com/spec.ccfc.min/${UBUNTU_KEY}" -o "ubuntu-${ubu
 rm -rf squashfs-root
 unsquashfs "ubuntu-${ubuntu_version}.squashfs.upstream"
 
-ssh-keygen -f id_rsa -N ""
-sudo mkdir -p squashfs-root/root/.ssh
-sudo cp -v id_rsa.pub squashfs-root/root/.ssh/authorized_keys
-mv -v id_rsa "./ubuntu-${ubuntu_version}.id_rsa"
-
 sudo chown -R root:root squashfs-root
 truncate -s 1G "ubuntu-${ubuntu_version}.ext4"
 sudo mkfs.ext4 -d squashfs-root -F "ubuntu-${ubuntu_version}.ext4"
