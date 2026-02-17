@@ -151,7 +151,7 @@ sudo apt-get update && sudo apt-get install -y \
   squashfs-tools e2fsprogs openssh-client iproute2
 ```
 
-Install Go (example):
+Install Go:
 
 ```bash
 cd /tmp
@@ -169,7 +169,7 @@ go version
 
 ```bash
 cd ~/
-git clone <repo>
+git clone https://github.com/joshfischer1108/fc-metrics.git
 cd fc-metrics
 
 make artifacts
