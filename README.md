@@ -79,6 +79,25 @@ The runner:
 
 Firecracker requires KVM. On Google Compute Engine that means nested virtualization.
 
+## Google Cloud prerequisites
+
+* `gcloud` CLI installed and authenticated
+* A GCP project selected: `gcloud config set project <PROJECT_ID>`
+* Compute Engine API enabled for the project
+* Permissions to create VM instances (at minimum: `compute.instances.create`, `compute.disks.create`, `compute.subnetworks.use`, `compute.instances.setMetadata` is commonly needed)
+* A VPC network and subnet available (default VPC is fine)
+* Quota for:
+
+    * 1x `n2-standard-4` VM in the chosen zone
+    * 50 GB Persistent Disk SSD
+
+Optional but useful:
+
+* Firewall allows SSH (default rule typically exists)
+* Local SSH key set up for `gcloud compute ssh` (handled automatically if not)
+
+
+
 ## Create a GCE VM (nested virtualization enabled)
 
 From a local machine with `gcloud` configured:
@@ -115,6 +134,16 @@ ls -l /dev/kvm
 
 If `/dev/kvm` is missing, nested virtualization is not active or the machine family does not support it.
 
+If `/dev/kvm` exists but is not usable as the current user:
+
+```bash
+sudo usermod -aG kvm "$USER"
+newgrp kvm
+sudo chgrp kvm /dev/kvm
+sudo chmod g+rw /dev/kvm
+ls -l /dev/kvm
+```
+
 ---
 
 # Host setup (inside the GCE VM)
@@ -138,25 +167,6 @@ echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
 source ~/.bashrc
 go version
 ```
-
-## Google Cloud prerequisites
-
-* `gcloud` CLI installed and authenticated
-* A GCP project selected: `gcloud config set project <PROJECT_ID>`
-* Compute Engine API enabled for the project
-* Permissions to create VM instances (at minimum: `compute.instances.create`, `compute.disks.create`, `compute.subnetworks.use`, `compute.instances.setMetadata` is commonly needed)
-* A VPC network and subnet available (default VPC is fine)
-* Quota for:
-
-    * 1x `n2-standard-4` VM in the chosen zone
-    * 50 GB Persistent Disk SSD
-
-Optional but useful:
-
-* Firewall allows SSH (default rule typically exists)
-* Local SSH key set up for `gcloud compute ssh` (handled automatically if not)
-
-
 
 
 ## VM side prerequisites
@@ -199,9 +209,10 @@ source ~/.bashrc
 go version
 ```
 
-From there, the repo flow stays the same:
+From the home directory:
 
 ```bash
+cd ~/
 git clone <repo>
 cd fc-metrics
 
