@@ -2,6 +2,8 @@ package fcrun
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -83,7 +85,7 @@ func (r *Runner) Run(ctx context.Context, cfg RunConfig) (Receipt, error) {
 			cfg.Network.IfaceID = "eth0"
 		}
 		if cfg.Network.TapName == "" {
-			cfg.Network.TapName = "tap-" + runID[len("run-"):]
+			cfg.Network.TapName = genTapName()
 		}
 		if cfg.Network.GuestMAC == "" {
 			cfg.Network.GuestMAC = "02:FC:00:00:00:01"
@@ -225,8 +227,13 @@ func (r *Runner) Run(ctx context.Context, cfg RunConfig) (Receipt, error) {
 	return receipt, nil
 }
 
+func genTapName() string {
+	b := make([]byte, 5) // 10 hex chars
+	_, _ = rand.Read(b)
+	return "tap" + hex.EncodeToString(b) // "tap" + 10 = 13 chars
+}
+
 func MustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
-
