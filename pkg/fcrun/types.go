@@ -41,8 +41,7 @@ type NetworkConfig struct {
 type MMDSConfig struct {
 	Enable  bool
 	Version string // "V2"
-	// written to PUT /mmds
-	Data map[string]any
+	Data    map[string]any
 }
 
 type RunConfig struct {
@@ -56,8 +55,8 @@ type RunConfig struct {
 	TimeoutSeconds int
 
 	// guest done detection
-	MarkerPrefix string // recommend "FC_RECEIPT:" later
-	MarkerJSONKey string // "workspace_files_delta" by default
+	MarkerPrefix  string
+	MarkerJSONKey string
 
 	// optional
 	IncludeRawMetrics bool
@@ -66,4 +65,3 @@ type RunConfig struct {
 	Network NetworkConfig
 	MMDS    MMDSConfig
 }
-

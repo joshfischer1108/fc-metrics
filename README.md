@@ -1,28 +1,28 @@
 # fc-metrics
 
-Host-side Firecracker runner that emits a single JSON receipt per microVM run, including disk and (optional) network byte counters plus guest-produced workspace deltas.
+Host-side Firecracker runner that emits a single JSON receipt per microVM run. The receipt includes disk counters, optional network counters, and guest-produced “workspace delta” measurements.
 
 ## What it is
 
-`fc-metrics` is a small wrapper around Firecracker that:
+`fc-metrics` coordinates a Firecracker microVM run and prints one JSON object at the end:
 
 * boots a microVM
-* waits for a completion marker from inside the guest (serial console)
+* waits for a completion marker from the guest (serial console)
 * forces Firecracker to flush metrics
-* outputs a single JSON receipt containing per-run measurements
+* parses metrics and prints a single per-run receipt
 
-The runner is intentionally “thin”: it coordinates Firecracker and collects metrics. Guest behavior is owned by the root filesystem image (the “agent” lives in the guest).
+Guest behavior lives inside the root filesystem image. The host runner stays intentionally thin.
 
 ## What problem it solves
 
-Firecracker metrics and VM lifecycle are easy to get wrong in production:
+Firecracker lifecycle and metrics collection are easy to get subtly wrong:
 
-* Firecracker can keep running after a guest powers off, so host completion should not rely on Firecracker process exit.
-* Metrics can be incomplete unless explicitly flushed and the metrics file is allowed to advance.
-* A clean “done” signal is needed to reliably mark run completion.
-* Teams often want one portable JSON record per run instead of scraping logs.
+* A guest can halt while Firecracker keeps running, so relying on Firecracker process exit is brittle.
+* Metrics can be incomplete unless `FlushMetrics` is called and the metrics file is allowed to advance. ([GitHub][2])
+* A clean “done” signal from inside the guest is needed to mark completion reliably.
+* Producing one portable record per run is simpler than scraping logs.
 
-`fc-metrics` provides a consistent pattern for producing a per-run receipt.
+`fc-metrics` provides a repeatable pattern for producing one JSON receipt per run.
 
 ## Receipt output
 
@@ -38,69 +38,45 @@ Typical fields:
 * `firecracker_log_path`
 * optional raw metrics blob (when enabled)
 
-## How it works
+## Concepts
 
-### Guest side
+### squashfs vs ext4 rootfs
 
-The guest rootfs contains:
+* `ubuntu-*.squashfs.upstream` is a compressed, read-only filesystem image that is easy to distribute.
+* `ubuntu-*.ext4` is a writable disk image used as the VM root disk. It is created by unpacking squashfs and building an ext4 filesystem so the guest can write files and systemd units can be installed/modified.
 
-* `fc-task.service` (systemd oneshot)
-* `/usr/local/bin/fc_task.sh`
+### TAP devices
 
-`fc_task.sh` writes output into `/workspace/run-<stamp>/`, calculates before/after stats, prints exactly one JSON line to `/dev/console`, then powers off:
+A TAP device is a host-side virtual NIC. Firecracker can attach a TAP as a guest NIC, which enables network byte counters and MMDS traffic generation.
 
-```json
-{"workspace_files_delta":3,"workspace_bytes_delta":5242892,"stamp":"fc_task_v4_1771326807"}
-```
+### MMDS
 
-The host runner parses Firecracker serial output (captured in `firecracker.log`) to find this JSON line.
+MMDS is Firecracker’s metadata service, configured through the Firecracker API. ([GitHub][2])
+Firecracker’s device model intercepts ARP and TCP packets destined for the MMDS IP (default `169.254.169.254`) and serves metadata responses without sending that traffic to the TAP device. ([GitHub][2])
 
-### Host side
+## Host requirements
 
-The runner:
+* Linux host with KVM (`/dev/kvm`)
+* x86_64 host is the simplest path for the provided artifacts
+* Firecracker requires KVM access; for cloud hosts this typically means nested virtualization
 
-1. Starts Firecracker with an API unix socket.
-2. Configures:
-
-    * `/metrics` (metrics output path + flush interval)
-    * `/machine-config`
-    * `/boot-source`
-    * `/drives/rootfs`
-    * optional `/network-interfaces/eth0` (TAP)
-    * optional MMDS (`/mmds/config`, `/mmds`)
-3. Starts the instance.
-4. Waits for the guest JSON marker (or halt strings).
-5. Calls `FlushMetrics` and waits for `metrics.log` to advance.
-6. Stops Firecracker and prints a JSON receipt.
+On Google Compute Engine, nested virtualization is not supported on Arm CPUs (and is also not supported on AMD processors for this feature), so Apple Silicon workflows typically use a remote x86_64 Linux host. ([Google Cloud Documentation][1])
 
 ---
 
-# Running on Google Cloud
+# Quick start (Google Cloud)
 
-Firecracker requires KVM. On Google Compute Engine that means nested virtualization.
+Firecracker needs KVM. On GCE that means nested virtualization.
 
-## Google Cloud prerequisites
+## Prerequisites (local machine)
 
 * `gcloud` CLI installed and authenticated
-* A GCP project selected: `gcloud config set project <PROJECT_ID>`
-* Compute Engine API enabled for the project
-* Permissions to create VM instances (at minimum: `compute.instances.create`, `compute.disks.create`, `compute.subnetworks.use`, `compute.instances.setMetadata` is commonly needed)
-* A VPC network and subnet available (default VPC is fine)
-* Quota for:
+* project selected: `gcloud config set project <PROJECT_ID>`
+* Compute Engine API enabled
+* permissions to create instances
+* quota for the chosen machine type and disk
 
-    * 1x `n2-standard-4` VM in the chosen zone
-    * 50 GB Persistent Disk SSD
-
-Optional but useful:
-
-* Firewall allows SSH (default rule typically exists)
-* Local SSH key set up for `gcloud compute ssh` (handled automatically if not)
-
-
-
-## Create a GCE VM (nested virtualization enabled)
-
-From a local machine with `gcloud` configured:
+## Create a GCE VM with nested virtualization
 
 ```bash
 ZONE=us-central1-a
@@ -115,30 +91,51 @@ gcloud compute instances create $NAME \
   --boot-disk-size=50GB \
   --boot-disk-type=pd-ssd \
   --enable-nested-virtualization
-
 ```
 
-SSH into it:
+Wait 30–60 seconds, then SSH in:
 
 ```bash
 gcloud compute ssh "$NAME" --zone="$ZONE"
 ```
 
-### Verify `/dev/kvm` exists
-
-Inside the VM:
+Verify KVM exists:
 
 ```bash
 ls -l /dev/kvm
 ```
 
-If `/dev/kvm` is missing, nested virtualization is not active or the machine family does not support it.
+If `/dev/kvm` is missing, nested virtualization is not active or the instance type does not support it.
 
-If `/dev/kvm` exists but is not usable as the current user:
+## Allow non-root access to /dev/kvm
+
+The common failure mode is:
+
+`Permission denied (os error 13) ... Make sure the user launching the firecracker process is configured on the /dev/kvm file's ACL.`
+
+Fix by adding the user to the `kvm` group:
 
 ```bash
 sudo usermod -aG kvm "$USER"
-newgrp kvm
+```
+
+Make the group change take effect;
+
+```bash
+exit
+gcloud compute ssh "$NAME" --zone="$ZONE"
+```
+
+Confirm membership:
+
+```bash
+id | grep -Eo 'kvm' || true
+ls -l /dev/kvm
+```
+
+Optional: apply group permissions (usually already correct on Ubuntu images):
+
+```bash
 sudo chgrp kvm /dev/kvm
 sudo chmod g+rw /dev/kvm
 ls -l /dev/kvm
@@ -146,17 +143,15 @@ ls -l /dev/kvm
 
 ---
 
-# Host setup (inside the GCE VM)
-
-## Install packages
+# Install dependencies (inside the GCE VM)
 
 ```bash
 sudo apt-get update && sudo apt-get install -y \
   git curl jq unzip build-essential wget \
-  squashfs-tools e2fsprogs openssh-client
+  squashfs-tools e2fsprogs openssh-client iproute2
 ```
 
-## Install Go (example)
+Install Go (example):
 
 ```bash
 cd /tmp
@@ -168,48 +163,9 @@ source ~/.bashrc
 go version
 ```
 
+---
 
-## VM side prerequisites
-
-After SSHing in, install basics:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y \
-  git curl wget jq unzip build-essential \
-  squashfs-tools e2fsprogs openssh-client \
-  iproute2
-```
-
-Verify KVM is present:
-
-```bash
-ls -l /dev/kvm
-```
-
-If `/dev/kvm` exists but is not usable as the current user:
-
-```bash
-sudo usermod -aG kvm "$USER"
-newgrp kvm
-sudo chgrp kvm /dev/kvm
-sudo chmod g+rw /dev/kvm
-ls -l /dev/kvm
-```
-
-Install Go (example version used previously):
-
-```bash
-cd /tmp
-curl -LO https://go.dev/dl/go1.22.2.linux-amd64.tar.gz
-sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf go1.22.2.linux-amd64.tar.gz
-echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-source ~/.bashrc
-go version
-```
-
-From the home directory:
+# Build and run
 
 ```bash
 cd ~/
@@ -222,6 +178,26 @@ make build
 make run
 ```
 
+After successful completion, the receipt JSON is printed to stdout.
+e.g. 
+```json
+{
+  "run_id": "run-…",
+  "started_at": "2026-02-17T17:20:46Z",
+  "ended_at": "2026-02-17T17:20:53Z",
+  "duration_ms": 6594,
+  "exit_code": 0,
+  "vcpus": 2,
+  "mem_mib": 2048,
+  "net_rx_bytes": 0,
+  "net_tx_bytes": 0,
+  "block_read_bytes": 51203072,
+  "block_write_bytes": 6451200,
+  "workspace_files_delta": 3,
+  "workspace_bytes_delta": 5242892
+}
+```
+
 For TAP and MMDS testing:
 
 ```bash
@@ -229,204 +205,93 @@ sudo make run-net
 ```
 
 ---
-# Miscellaneous
 
-## Firecracker artifacts
+# What just happened
 
-Artifacts are placed in `~/fc-artifacts/`:
+## `make artifacts`
 
-* `firecracker` (Firecracker binary)
-* `vmlinux` (guest kernel)
-* `ubuntu-24.04.ext4` (guest root filesystem)
+Downloads or assembles runtime artifacts into `~/fc-artifacts/`:
 
-## Create the artifacts directory
+* Firecracker binary
+* guest kernel (`vmlinux`)
+* upstream Ubuntu squashfs
+* writable Ubuntu ext4 (root disk used by the microVM)
+* optional SSH key material used during image creation
 
-```bash
-mkdir -p ~/fc-artifacts
-cd ~/fc-artifacts
-```
+## `make patch`
 
-## Download Firecracker binary (GitHub release tarball)
+Applies guest-side wiring into the ext4 image:
 
-```bash
-ARCH="$(uname -m)"
-release_url="https://github.com/firecracker-microvm/firecracker/releases"
-latest="$(basename "$(curl -fsSLI -o /dev/null -w %{url_effective} ${release_url}/latest)")"
+* installs `/usr/local/bin/fc_task.sh`
+* installs/enables `fc-task.service` (systemd oneshot)
 
-curl -L "${release_url}/download/${latest}/firecracker-${latest}-${ARCH}.tgz" | tar -xz
-mv "release-${latest}-${ARCH}/firecracker-${latest}-${ARCH}" ./firecracker
-chmod +x ./firecracker
-./firecracker --version
-```
+The guest task is responsible for two things:
 
-## Download kernel and Ubuntu rootfs from Firecracker CI bucket
+1. write exactly one JSON “done marker” line to `/dev/console`
+2. power off
 
-```bash
-CI_VERSION="v1.14"
-ARCH="x86_64"
+That marker is parsed from the serial console by the host runner.
 
-# Kernel
-KERNEL_KEY=$(
-  curl -fsSL "http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecracker-ci/${CI_VERSION}/${ARCH}/vmlinux-&list-type=2" \
-  | grep -oE "firecracker-ci/${CI_VERSION}/${ARCH}/vmlinux-[0-9]+\.[0-9]+\.[0-9]+" \
-  | sort -V \
-  | tail -1 \
-  | tr -d '\r\n'
-)
-echo "Kernel key: [$KERNEL_KEY]"
-wget -O vmlinux "https://s3.amazonaws.com/spec.ccfc.min/${KERNEL_KEY}"
+## `make build`
 
-# Ubuntu squashfs
-UBUNTU_KEY=$(
-  curl -fsSL "http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecracker-ci/${CI_VERSION}/${ARCH}/ubuntu-&list-type=2" \
-  | grep -oE "firecracker-ci/${CI_VERSION}/${ARCH}/ubuntu-[0-9]+\.[0-9]+\.squashfs" \
-  | sort -V \
-  | tail -1 \
-  | tr -d '\r\n'
-)
-echo "Ubuntu key: [$UBUNTU_KEY]"
+Builds the host-side runner (`fc-run`) and demos.
 
-ubuntu_version="$(basename "${UBUNTU_KEY}" .squashfs | grep -oE '[0-9]+\.[0-9]+')"
-wget -O "ubuntu-${ubuntu_version}.squashfs.upstream" "https://s3.amazonaws.com/spec.ccfc.min/${UBUNTU_KEY}"
+## `make run`
 
-rm -rf squashfs-root
-unsquashfs "ubuntu-${ubuntu_version}.squashfs.upstream"
-```
+Runs one microVM and prints a receipt JSON. Disk counters come from Firecracker metrics and are flushed at the end using the `FlushMetrics` action. ([GitHub][2])
+Metrics output is written to the configured `metrics_path`. ([GitHub][2])
 
+## `sudo make run-net`
 
-## Convert squashfs-root to ext4
+Same as `make run`, plus:
 
-```bash
-truncate -s 1G "ubuntu-${ubuntu_version}.ext4"
-sudo mkfs.ext4 -d squashfs-root -F "ubuntu-${ubuntu_version}.ext4"
-sudo e2fsck -fn "ubuntu-${ubuntu_version}.ext4" >/dev/null && echo "Rootfs fsck: OK"
+* creates a host TAP device and attaches it as `eth0` in the microVM
+* enables MMDS on `eth0`
+* causes network activity (MMDS fetches are sufficient), so `net_rx_bytes` and `net_tx_bytes` become non-zero
 
-# Convenience name used by examples
-ln -sf "ubuntu-${ubuntu_version}.ext4" ubuntu-24.04.ext4
-```
+TAP creation requires `CAP_NET_ADMIN`, hence `sudo`.
 
 ---
 
-# Guest task wiring (fc-task.service + fc_task.sh)
+# Guest assets in the repo
 
-The guest must do two things:
+Guest content should be stored as versioned files in the repository and copied into the ext4 image by `make patch`. A simple layout:
 
-* emit a single JSON marker line to `/dev/console`
-* power off when complete
-
-## Mount the rootfs and edit
-
-```bash
-sudo mkdir -p /mnt/fcroot
-sudo mount -o loop ~/fc-artifacts/ubuntu-24.04.ext4 /mnt/fcroot
+```
+guest/
+  fc_task.sh
+  fc-task.service
 ```
 
-Edit the guest task script:
-
-```bash
-sudo vim /mnt/fcroot/usr/local/bin/fc_task.sh
-sudo chmod +x /mnt/fcroot/usr/local/bin/fc_task.sh
-```
-
-Ensure the systemd unit exists and is enabled:
-
-```bash
-sudo vim /mnt/fcroot/etc/systemd/system/fc-task.service
-sudo chroot /mnt/fcroot systemctl enable fc-task.service >/dev/null 2>&1 || true
-```
-
-Unmount cleanly:
-
-```bash
-sudo sync
-sudo umount /mnt/fcroot
-```
-
----
-
-# Install and run fc-metrics
-
-## Clone
-
-```bash
-cd ~
-git clone git@github.com:BirdyFoot/fc-metrics.git
-cd fc-metrics
-```
-
-## Build
-
-```bash
-go build ./cmd/fc-run
-```
-
-Binary output:
-
-```bash
-./cmd/fc-run/fc-run
-```
-
-## Run (disk + workspace metrics)
-
-```bash
-./cmd/fc-run/fc-run \
-  -fc ~/fc-artifacts/firecracker \
-  -kernel ~/fc-artifacts/vmlinux \
-  -rootfs ~/fc-artifacts/ubuntu-24.04.ext4 \
-  -timeout 30s \
-  -keep
-```
-
-Expected: non-zero `block_read_bytes` and `block_write_bytes`, plus guest workspace deltas when the guest emits the JSON marker.
-
-## Run with networking + MMDS (net byte counters)
-
-TAP creation requires `NET_ADMIN`. Simplest approach is `sudo`:
-
-```bash
-sudo ./cmd/fc-run/fc-run \
-  -fc ~/fc-artifacts/firecracker \
-  -kernel ~/fc-artifacts/vmlinux \
-  -rootfs ~/fc-artifacts/ubuntu-24.04.ext4 \
-  -timeout 30s \
-  -keep \
-  -net \
-  -mmds
-```
-
-Expected: non-zero `net_rx_bytes` and `net_tx_bytes` once a NIC is attached and some traffic exists (MMDS requests are sufficient to produce baseline network activity).
+`make patch` becomes the single source of truth for what goes into the guest image, instead of editing a mounted image by hand.
 
 ---
 
 # Debugging
 
-With `-keep`, each run writes to `/tmp/run-<id>/`:
+With `-keep` (or the Makefile equivalent), each run writes to `/tmp/run-<id>/`:
 
-* `firecracker.log` (Firecracker stdout/stderr plus guest serial)
+* `firecracker.log` (Firecracker logs plus guest serial)
 * `metrics.log` (Firecracker metrics snapshots)
 
-## Confirm guest marker was emitted
+Confirm the guest marker was emitted:
 
 ```bash
 RUN_DIR=$(ls -td /tmp/run-* | head -n 1)
 grep -n "workspace_files_delta" "$RUN_DIR/firecracker.log" | tail -n 5
 ```
 
-## Inspect metrics snapshots
+Inspect metrics snapshots:
 
 ```bash
 wc -l "$RUN_DIR/metrics.log"
 tail -n 5 "$RUN_DIR/metrics.log"
 ```
 
-## Common gotchas
+Common gotchas:
 
-* The correct unmount command is `sudo umount /mnt/fcroot` (not `unmount`).
-* If metrics are missing, Firecracker may have been killed before metrics flushed or before the metrics file advanced.
-* Network bytes remain zero unless:
-
-    * a NIC is attached via Firecracker API
-    * a TAP device exists and is up
-    * some traffic occurs inside the guest (MMDS fetch is a simple source of traffic)
+* correct unmount command is `sudo umount /mnt/fcroot` (not `unmount`)
+* network bytes stay at zero unless a NIC is attached and traffic happens
+* TAP + MMDS requires root privileges (or `cap_net_admin`)
 
 ---
