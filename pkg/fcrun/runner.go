@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -129,9 +129,16 @@ func (r *Runner) Run(ctx context.Context, cfg RunConfig) (Receipt, error) {
 		return Receipt{}, err
 	}
 
+	// Create a per-run copy of the rootfs so runs are isolated and repeatable.
+	rootfsCopy := filepath.Join(runDir, "rootfs.ext4")
+	if err := copyFile(cfg.RootFS, rootfsCopy); err != nil {
+		return Receipt{}, fmt.Errorf("copy rootfs: %w", err)
+	}
+
+	// attach the copied rootfs to the VM.
 	if err := putJSON(timeoutCtx, client, "/drives/rootfs", map[string]any{
 		"drive_id":       "rootfs",
-		"path_on_host":   cfg.RootFS,
+		"path_on_host":   rootfsCopy,
 		"is_root_device": true,
 		"is_read_only":   false,
 	}); err != nil {
@@ -233,7 +240,26 @@ func genTapName() string {
 	return "tap" + hex.EncodeToString(b) // "tap" + 10 = 13 chars
 }
 
-func MustJSON(v any) string {
-	b, _ := json.Marshal(v)
-	return string(b)
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	st, err := in.Stat()
+	if err != nil {
+		return err
+	}
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, st.Mode())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Close() }()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
 }

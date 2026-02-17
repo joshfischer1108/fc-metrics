@@ -1,0 +1,14 @@
+[Unit]
+Description=Firecracker one-shot task
+After=basic.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/fc_task.sh
+TimeoutStartSec=0
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/ttyS0
+
+[Install]
+WantedBy=multi-user.target
